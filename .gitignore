@@ -1,0 +1,22 @@
+*.iml
+.gradle/
+build/
+local.properties
+.idea/
+.DS_Store
+*.apk
+*.aab
+*.jks
+*.keystore
+# engine build products (produced by CI)
+native/qemu/work/
+native/qemu/out/
+app/src/main/jniLibs/arm64-v8a/*.so
+app/src/main/assets/firmware/*
+!app/src/main/assets/firmware/README.txt
+# NEVER commit Windows installation media
+*.iso
+*.vhd
+*.vhdx
+*.wim
+*.esd

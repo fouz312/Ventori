@@ -1,0 +1,113 @@
+name: Android Build
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      build_qemu:
+        description: "Also compile the QEMU engine (slow: 30-90 min, cached afterwards)"
+        type: boolean
+        default: true
+
+jobs:
+  # ------------------------------------------------------------------
+  # Job 1: cross-compile the QEMU virtualization engine for Android arm64.
+  # If this job fails, the app job still builds an APK (without the engine)
+  # and the app reports "engine not bundled" honestly.
+  # ------------------------------------------------------------------
+  qemu-engine:
+    if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_qemu }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 150
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/cache@v4
+        with:
+          path: native/qemu/work
+          key: qemu-work-${{ hashFiles('native/qemu/build-qemu.sh', 'native/qemu/patches/**') }}
+
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build pkg-config python3-venv python3-pip flex bison curl xz-utils make gcc g++ gettext
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install NDK
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "ndk;26.3.11579264"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+
+      - name: Build QEMU for Android arm64
+        run: bash native/qemu/build-qemu.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: qemu-engine
+          path: native/qemu/out/jniLibs
+          if-no-files-found: error
+
+  # ------------------------------------------------------------------
+  # Job 2: build, test and package the Android app.
+  # ------------------------------------------------------------------
+  app:
+    needs: qemu-engine
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: android-actions/setup-android@v3
+
+      - name: Install SDK platform, build-tools, NDK and CMake
+        run: |
+          yes | sdkmanager --licenses >/dev/null || true
+          sdkmanager "platforms;android-34" "build-tools;34.0.0" "ndk;26.3.11579264" "cmake;3.22.1"
+
+      - name: Download QEMU engine (if the engine job succeeded)
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: qemu-engine
+          path: app/src/main/jniLibs
+
+      - name: Fetch open-source UEFI firmware
+        run: bash scripts/fetch-firmware.sh
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.9"
+
+      - name: Unit tests
+        run: gradle --no-daemon :app:testDebugUnitTest
+
+      - name: Build debug APK (compiles Kotlin + the JNI library)
+        run: gradle --no-daemon :app:assembleDebug
+
+      - name: Report what is inside the APK
+        run: |
+          APK=$(ls app/build/outputs/apk/debug/*.apk | head -1)
+          echo "### Vantora debug APK" >> "$GITHUB_STEP_SUMMARY"
+          echo "Size: $(du -h "$APK" | cut -f1)" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          unzip -l "$APK" | grep -E "lib/arm64-v8a|assets/firmware" >> "$GITHUB_STEP_SUMMARY" || true
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          unzip -l "$APK" | grep -q libvantora_native.so || { echo "JNI library missing"; exit 1; }
+          if unzip -l "$APK" | grep -q libqemu-system; then echo "QEMU engine bundled: YES" >> "$GITHUB_STEP_SUMMARY"; else echo "QEMU engine bundled: NO (engine job failed or was skipped)" >> "$GITHUB_STEP_SUMMARY"; fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: vantora-debug-apk
+          path: app/build/outputs/apk/debug/*.apk
+          if-no-files-found: error
