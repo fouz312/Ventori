@@ -41,9 +41,11 @@ jobs:
           echo "ANDROID_NDK_HOME=$SDK/ndk/26.3.11579264" >> "$GITHUB_ENV"
 
       - name: Build QEMU for Android arm64
+        if: ${{ hashFiles('native/qemu/build-qemu.sh') != '' }}
         run: bash native/qemu/build-qemu.sh
 
       - uses: actions/upload-artifact@v4
+        if: ${{ hashFiles('native/qemu/build-qemu.sh') != '' }}
         with:
           name: qemu-engine
           path: native/qemu/out/jniLibs
@@ -79,7 +81,23 @@ jobs:
           path: app/src/main/jniLibs
 
       - name: Fetch open-source UEFI firmware
-        run: bash scripts/fetch-firmware.sh
+        continue-on-error: true
+        run: |
+          OUT="$GITHUB_WORKSPACE/app/src/main/assets/firmware"
+          mkdir -p "$OUT"
+          TMP="$(mktemp -d)"
+          cd "$TMP"
+          sudo apt-get update -qq
+          apt-get download qemu-efi-aarch64 ovmf
+          for d in *.deb; do dpkg -x "$d" x; done
+          cp x/usr/share/qemu-efi-aarch64/QEMU_EFI.fd "$OUT/QEMU_EFI.fd"
+          code="$(find x/usr/share/OVMF -name 'OVMF_CODE_4M.fd' | head -1)"
+          [ -z "$code" ] && code="$(find x/usr/share/OVMF -name 'OVMF_CODE.fd' | head -1)"
+          vars="$(find x/usr/share/OVMF -name 'OVMF_VARS_4M.fd' | head -1)"
+          [ -z "$vars" ] && vars="$(find x/usr/share/OVMF -name 'OVMF_VARS.fd' | head -1)"
+          cp "$code" "$OUT/OVMF_CODE.fd"
+          cp "$vars" "$OUT/OVMF_VARS.fd"
+          ls -l "$OUT"
 
       - uses: gradle/actions/setup-gradle@v4
         with:
