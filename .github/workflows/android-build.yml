@@ -12,11 +12,6 @@ on:
         default: true
 
 jobs:
-  # ------------------------------------------------------------------
-  # Job 1: cross-compile the QEMU virtualization engine for Android arm64.
-  # If this job fails, the app job still builds an APK (without the engine)
-  # and the app reports "engine not bundled" honestly.
-  # ------------------------------------------------------------------
   qemu-engine:
     if: ${{ github.event_name != 'workflow_dispatch' || inputs.build_qemu }}
     runs-on: ubuntu-24.04
@@ -35,13 +30,11 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y ninja-build pkg-config python3-venv python3-pip flex bison curl xz-utils make gcc g++ gettext
 
-      - uses: android-actions/setup-android@v3
-
       - name: Install NDK
         run: |
           yes | sdkmanager --licenses >/dev/null || true
           sdkmanager "ndk;26.3.11579264"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/26.3.11579264" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/26.3.11579264" >> "$GITHUB_ENV"
 
       - name: Build QEMU for Android arm64
         run: bash native/qemu/build-qemu.sh
@@ -52,9 +45,6 @@ jobs:
           path: native/qemu/out/jniLibs
           if-no-files-found: error
 
-  # ------------------------------------------------------------------
-  # Job 2: build, test and package the Android app.
-  # ------------------------------------------------------------------
   app:
     needs: qemu-engine
     if: ${{ always() }}
@@ -67,8 +57,6 @@ jobs:
         with:
           distribution: temurin
           java-version: "17"
-
-      - uses: android-actions/setup-android@v3
 
       - name: Install SDK platform, build-tools, NDK and CMake
         run: |
